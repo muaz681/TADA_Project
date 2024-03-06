@@ -1,0 +1,171 @@
+USE [ERP_HR]
+GO
+/****** Object:  StoredProcedure [dbo].[sprTADAUserRequest]    Script Date: 3/6/2024 11:34:19 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+-- =============================================
+-- Author:		<Author,,Mowaz Ahmed>
+-- Create date: <Create Date,, 03/21/2023>
+-- Description:	<Description,,>
+-- EXEC ERP_HR.dbo.sprTADAUserRequest 
+-- =============================================
+ALTER PROCEDURE [dbo].[sprTADAUserRequest]
+@type int,
+@RequesterEnroll int, @JourneyStartDate datetime, @JourneyEndDate datetime, @JourneyStartLocation varchar(100),
+@JourneyDestination varchar(100), @RequestAmount decimal(18, 4), @JourneyReason varchar(500), @intID int, @strApprovedCodes varchar(max) = ''
+	
+AS
+BEGIN
+	if(@type = 1)
+	begin
+		if((@RequesterEnroll IS NOT NULL) or (@JourneyStartDate IS NOT NULL) or (@JourneyEndDate IS NOT NULL) or (@RequestAmount IS NOT NULL) or (@JourneyReason IS NOT NULL))
+		begin
+			insert into [ERP_HR].[dbo].[TadaAdvanceRequisition]
+			([RequesterEnroll], [JourneyStartDate], [JourneyEndDate], [JourneyStartLocation], [JourneyDestination], [RequestAmount], [JourneyReason])
+			values
+			(@RequesterEnroll, @JourneyStartDate, @JourneyEndDate, @JourneyStartLocation, @JourneyDestination, @RequestAmount, @JourneyReason)
+			select 'Inserted Successfully' strMsg
+		end
+		else
+		begin
+			select 'Please Inserted Required Field!' strMsg
+		end
+	end
+	else if(@type=2) -- This part is user status check and update permission
+	begin
+		SELECT p.AdvTadaID intID, p.RequestAmount estimatAmount, p.JourneyStartDate startDate, p.JourneyEndDate endDate,
+				p.JourneyStartLocation, p.JourneyDestination, p.JourneyReason reason,
+				(CASE WHEN p.SupApprovedAmount is null THEN 'Pending' when p.SupApprovedAmount = '0.0000' then 'Rejected' ELSE 'Approved' END) supapproval,
+				(CASE WHEN p.HRApprovedAmount is null THEN 'Pending' WHEN p.HRApprovedAmount = '0.0000' THEN 'Rejected' ELSE 'Approved' END) hrApproval,
+				(CASE WHEN p.AccEnroll is null THEN 'Pending' ELSE 'Approved' END) accApproval,
+				p.SupApprovedAmount supAprvalAmount, p.HRApprovedAmount hrApprovalAmount
+		  FROM [ERP_HR].[dbo].[TadaAdvanceRequisition] p
+		  JOIN ERP_HR.dbo.QRYEMPLOYEEPROFILEALL e ON e.intEmployeeID=p.RequesterEnroll
+		  LEFT JOIN ERP_HR.dbo.tblEmployee ed ON ed.intEmployeeID=p.SupEnroll
+		  LEFT JOIN ERP_HR.dbo.tblEmployee edddd ON edddd.intEmployeeID=p.HREnroll
+		WHERE p.RequesterEnroll = @RequesterEnroll and p.SupEnroll is null
+	end
+	else if(@type = 3) -- This part is user update part
+	begin
+		update [ERP_HR].[dbo].[TadaAdvanceRequisition] set 
+		JourneyStartDate = @JourneyStartDate, JourneyEndDate = @JourneyEndDate, JourneyStartLocation = @JourneyStartLocation, 
+		JourneyDestination = @JourneyDestination, RequestAmount = @RequestAmount, JourneyReason = @JourneyReason where 
+		AdvTadaID = @intID and ApprovalLevel = 0 -- This requestEnroll use AdvTADAID
+	end
+	else if(@type = 4) -- This part is supervisor list part
+	begin
+		SELECT p.AdvTadaID intId, e.strEmployeeName employeName,e.strDesignation empDesignation, e.strDepatrment empDept,p.RequestAmount estimatAmount, p.RequesterEnroll enroll,
+				p.JourneyStartDate startDate, p.JourneyEndDate endDate,
+				p.JourneyStartLocation, p.JourneyDestination, p.JourneyReason reason
+		  FROM [ERP_HR].[dbo].[TadaAdvanceRequisition] p
+		  JOIN ERP_HR.dbo.QRYEMPLOYEEPROFILEALL e ON e.intEmployeeID=p.RequesterEnroll
+		  LEFT JOIN ERP_HR.dbo.tblEmployee ed ON ed.intEmployeeID=p.SupEnroll
+		  WHERE p.RequesterEnroll IN (
+		  SELECT intEmployeeID FROM ERP_HR.dbo.tblEmployee WHERE intSuperviserId=@RequesterEnroll -- This requestEnroll use SuperVisorId
+		  ) and p.InsertionDate between @JourneyStartDate and @JourneyEndDate and p.IsActive = 1 and ApprovalLevel = 0
+	end
+	else if(@type = 5) -- This part of supervisor approve part
+	begin
+		update [ERP_HR].[dbo].[TadaAdvanceRequisition] set 
+		SupEnroll = @RequesterEnroll, SupApprovedAmount = @RequestAmount, SupApprovedDate = GETDATE(), ApprovalLevel = 1, JourneyReason = @JourneyReason
+		where AdvTadaID = @intID
+	end
+	else if(@type = 6) -- This part of supervisor Reject part
+	begin
+		update [ERP_HR].[dbo].[TadaAdvanceRequisition] set 
+		SupEnroll = @RequesterEnroll, SupApprovedAmount = '0.0000', SupApprovedDate = GETDATE(), ApprovalLevel = 0, IsActive = 0, JourneyReason = @JourneyReason
+		where AdvTadaID = @intID
+	end
+	else if(@type=7) -- This part is Admin List Part
+	begin
+		SELECT p.AdvTadaID intId, e.strEmployeeName employeName,e.strDesignation empDesignation, e.strDepatrment empDept,p.SupApprovedAmount estimatAmount, p.RequesterEnroll enroll,
+				p.JourneyStartDate startDate, p.JourneyEndDate endDate,
+				p.JourneyStartLocation, p.JourneyDestination, p.JourneyReason reason
+		  FROM [ERP_HR].[dbo].[TadaAdvanceRequisition] p
+		  JOIN ERP_HR.dbo.QRYEMPLOYEEPROFILEALL e ON e.intEmployeeID=p.RequesterEnroll
+		  LEFT JOIN ERP_HR.dbo.tblEmployee ed ON ed.intEmployeeID=p.SupEnroll
+		  WHERE p.InsertionDate between @JourneyStartDate and @JourneyEndDate and p.IsActive = 1 and ApprovalLevel = 1 and p.HRApprovedDate is null
+	end
+	else if(@type=8) -- HR All Approve 
+	begin
+		declare @tblCodes table (intRowId int identity(1,1), intCode int)
+		declare @strCode varchar(200)
+
+
+		insert into @tblCodes (intCode)
+		select value from string_split(@strApprovedCodes, ',')
+
+		update mt
+		set mt.HREnroll = @RequesterEnroll, mt.HRApprovedAmount = mt.SupApprovedAmount, mt.HRApprovedDate = getdate(), mt.ApprovalLevel = 2
+		from [ERP_HR].[dbo].[TadaAdvanceRequisition] mt
+		join @tblCodes c on mt.AdvTadaID=c.intCode
+	end
+	else if(@type = 9) -- HR Single approve
+	begin
+		update [ERP_HR].[dbo].[TadaAdvanceRequisition] set 
+		HREnroll = @RequesterEnroll, HRApprovedAmount = @RequestAmount, HRApprovedDate = GETDATE(), ApprovalLevel = 2, JourneyReason = @JourneyReason
+		where AdvTadaID = @intID
+	end
+	else if(@type=10) --HR Single Reject
+	begin
+		update [ERP_HR].[dbo].[TadaAdvanceRequisition] set 
+		HREnroll = @RequesterEnroll, HRApprovedAmount = '0.0000', HRApprovedDate = GETDATE(), ApprovalLevel = 1, IsActive = 0, JourneyReason = @JourneyReason
+		where AdvTadaID = @intID
+	end
+	else if(@type=11) -- This part is user status check
+	begin
+		SELECT p.AdvTadaID intID, p.RequestAmount estimatAmount, p.JourneyStartDate startDate, p.JourneyEndDate endDate,
+				p.JourneyStartLocation, p.JourneyDestination, p.JourneyReason reason,
+				(CASE WHEN p.SupApprovedAmount is null THEN 'Pending' when p.SupApprovedAmount = '0.0000' then 'Rejected' ELSE 'Approved' END) supapproval,
+				(CASE WHEN p.HRApprovedAmount is null THEN 'Pending' WHEN p.HRApprovedAmount = '0.0000' THEN 'Rejected' ELSE 'Approved' END) hrApproval,
+				(CASE WHEN p.AccEnroll is null THEN 'Pending' ELSE 'Approved' END) accApproval,
+				p.SupApprovedAmount supAprvalAmount, p.HRApprovedAmount hrApprovalAmount
+		  FROM [ERP_HR].[dbo].[TadaAdvanceRequisition] p
+		  JOIN ERP_HR.dbo.QRYEMPLOYEEPROFILEALL e ON e.intEmployeeID=p.RequesterEnroll
+		  LEFT JOIN ERP_HR.dbo.tblEmployee ed ON ed.intEmployeeID=p.SupEnroll
+		  LEFT JOIN ERP_HR.dbo.tblEmployee edddd ON edddd.intEmployeeID=p.HREnroll
+		WHERE p.RequesterEnroll = @RequesterEnroll and p.SupEnroll is not null
+		and p.InsertionDate >= DATEADD(day, -40, GETDATE())
+		 
+	end
+	else if(@type=12) --Account Approval list
+	begin
+		SELECT p.AdvTadaID intId, e.strEmployeeName employeName,e.strDesignation empDesignation, e.strDepatrment empDept,p.HRApprovedAmount estimatAmount, p.RequesterEnroll enroll,
+				p.JourneyStartDate startDate, p.JourneyEndDate endDate,
+				p.JourneyStartLocation, p.JourneyDestination, p.JourneyReason reason
+		  FROM [ERP_HR].[dbo].[TadaAdvanceRequisition] p
+		  JOIN ERP_HR.dbo.QRYEMPLOYEEPROFILEALL e ON e.intEmployeeID=p.RequesterEnroll
+		  LEFT JOIN ERP_HR.dbo.tblEmployee ed ON ed.intEmployeeID=p.SupEnroll
+		  WHERE p.InsertionDate between @JourneyStartDate and @JourneyEndDate and p.IsActive = 1 and ApprovalLevel = 2 and p.AccApproveDate is null
+	end
+	else if(@type=13) --Account All data Approve
+	begin
+		declare @tblAccCodes table (intAccRowId int identity(1,1), intAccCode int)
+
+		insert into @tblAccCodes (intAccCode)
+		select value from string_split(@strApprovedCodes, ',')
+
+		update mt
+		set mt.AccEnroll = @RequesterEnroll, mt.AccApproveDate = getdate(), mt.ApprovalLevel = 3
+		from [ERP_HR].[dbo].[TadaAdvanceRequisition] mt
+		join @tblAccCodes c on mt.AdvTadaID=c.intAccCode
+	end
+	else if(@type=14) --Account Single Data Approved
+	begin
+		update [ERP_HR].[dbo].[TadaAdvanceRequisition] set 
+		AccEnroll = @RequesterEnroll, AccApproveDate = GETDATE(), ApprovalLevel = 3
+		where AdvTadaID = @intID
+	end
+	else if(@type=15)
+	begin
+		select * from ERP_HR.dbo.TadaAdminPermission where ParmitEnrol = @RequesterEnroll and IsActive = 1
+	end
+	
+	
+	
+	
+END
+
