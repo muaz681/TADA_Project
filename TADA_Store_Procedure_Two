@@ -1,0 +1,53 @@
+USE [ERP_HR]
+GO
+/****** Object:  StoredProcedure [dbo].[TadaInsertion]    Script Date: 3/6/2024 11:36:49 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:		Atahar Mansur
+-- Create date: 2023-03-27
+-- Description:	<Description,,>
+-- Exec [ERP_HR].[dbo].[TadaInsertion] 0, 473824, '<?xml version="1.0"?><Remotetadanobike><items FromDate="2023-04-01" ToDate="2023-04-02" fromAddress="test" toAddress="test" typeID="1" typeName="Transport" catName="Riksa" Amount="100" strReason="test" /><items FromDate="2023-03-03" ToDate="2023-03-17" fromAddress="test" toAddress="test" typeID="1" typeName="Transport" catName="Riksa" Amount="1001" strReason="test" /><items FromDate="2023-03-03" ToDate="2023-03-17" fromAddress="test" toAddress="test" typeID="1" typeName="Transport" catName="Riksa" Amount="1001" strReason="test" /><items FromDate="2023-03-03" ToDate="2023-03-17" fromAddress="test" toAddress="test" typeID="3" typeName="Food" catName="Rice" Amount="100" strReason="test" /></Remotetadanobike>'
+
+-- =============================================
+ALTER PROCEDURE [dbo].[TadaInsertion]
+	@AdvTadaID int, @Enroll int, @xml xml
+AS
+BEGIN
+	declare @tblXML table (intId int identity(1,1),FromDate datetime, ToDate datetime, fromAddress varchar(500), toAddress varchar(500), typeID int, typeName varchar(500), catName varchar(500), Amount decimal(18,4), strReason varchar(500))
+		  
+	insert into @tblXML (FromDate, ToDate, fromAddress, toAddress, typeID, typeName, catName, Amount, strReason)
+	select strXML.item.value('@FromDate[1]', 'datetime'), strXML.item.value('@ToDate[1]', 'datetime'), strXML.item.value('@fromAddress[1]', 'varchar(500)'), strXML.item.value('@toAddress[1]', 'varchar(500)')
+			, strXML.item.value('@typeID[1]', 'int'), strXML.item.value('@typeName[1]', 'varchar(500)'), strXML.item.value('@catName[1]', 'varchar(500)'), strXML.item.value('@Amount[1]', 'decimal(18,4)')
+			, strXML.item.value('@strReason[1]', 'varchar(500)')
+	From @xml.nodes('//Remotetadanobike/items') as strXML(item)
+
+
+	--select * from @tblXML
+	declare @FromDate datetime, @ToDate datetime, @fromAddress varchar(500), @toAddress varchar(500), @Amount decimal(18,4), @strReason varchar(500), @pkID int
+
+	select top 1 @FromDate=FromDate, @ToDate=ToDate, @fromAddress=fromAddress, @toAddress=toAddress, @strReason=strReason
+	from @tblXML
+
+	select @Amount=SUM(Amount) from @tblXML
+
+	--select @FromDate, @ToDate, @fromAddress, @toAddress
+
+	insert into [ERP_HR].[dbo].[TadaMain] ([AdvTadaID], [RequesterEnroll], [JourneyStartDate], [JourneyEndDate], [JourneyStartLocation], [JourneyDestination], [TotalAmount], [SupApprovedAmount], [HRApprovedAmount], [AuditApprovedAmount], Remarks, [ApprovalLevel])
+	values (@AdvTadaID, @Enroll, @FromDate, @ToDate, @fromAddress, @toAddress, @Amount, @Amount, @Amount, @Amount, @strReason, 0)
+
+	set @pkID = SCOPE_IDENTITY()
+
+	insert into [ERP_HR].[dbo].[TadaDetails] (TadaId, TypeID, Remarks, ReqAmount, SupApprovedAmount, HRApprovedAmount, AuditApprovedAmount, ApprovalLevel)
+	select @pkID, typeID, catName, Amount, Amount, Amount, Amount, 0
+	from @tblXML
+
+	if @AdvTadaID <> 0
+	begin
+		update [ERP_HR].[dbo].[TadaAdvanceRequisition]
+		set ApprovalLevel = 4
+		where AdvTadaID = @AdvTadaID
+	end
+END
